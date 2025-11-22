@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Button, Text, Modal, Profile } from "@stellar/design-system";
+import { Button, Modal, Profile } from "@stellar/design-system";
 import { useWallet } from "../hooks/useWallet";
-import { connectWallet, disconnectWallet } from "../util/wallet";
+import { connectWallet } from "../util/wallet";
 
 export const WalletButton = () => {
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
-  const { address, isPending, balances } = useWallet();
+  const { address, isPending, balances, disconnect } = useWallet();
   const buttonLabel = isPending ? "Loading..." : "Connect";
 
   if (!address) {
@@ -23,12 +23,6 @@ export const WalletButton = () => {
         opacity: isPending ? 0.6 : 1,
       }}
     >
-      {/* Balance - hidden on mobile, shown on tablet+ */}
-      <Text as="div" size="sm" className="hidden sm:block whitespace-nowrap">
-        <span className="hidden md:inline">Wallet Balance: </span>
-        {balances?.xlm?.balance ?? "-"} XLM
-      </Text>
-
       <div id="modalContainer">
         <Modal
           visible={showDisconnectModal}
@@ -45,7 +39,7 @@ export const WalletButton = () => {
               size="md"
               variant="primary"
               onClick={() => {
-                void disconnectWallet().then(() =>
+                void disconnect().finally(() =>
                   setShowDisconnectModal(false),
                 );
               }}
