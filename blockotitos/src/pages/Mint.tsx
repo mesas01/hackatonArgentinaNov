@@ -10,6 +10,7 @@ import {
   upsertClaimedSpot,
 } from "../utils/claimedSpots";
 import { buildErrorDetail, buildTxDetail } from "../utils/notificationHelpers";
+import { Html5Qrcode } from "html5-qrcode";
 
 const Mint: React.FC = () => {
   const { address } = useWallet();
@@ -21,8 +22,11 @@ const Mint: React.FC = () => {
   const [linkValue, setLinkValue] = useState("");
   const [codeValue, setCodeValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const claimPersistControllerRef = useRef<AbortController | null>(null);
   const actionPanelRef = useRef<HTMLDivElement | null>(null);
+  const qrCodeScannerRef = useRef<Html5Qrcode | null>(null);
+  const qrCodeContainerRef = useRef<HTMLDivElement | null>(null);
 
   const handleMethodSelect = (method: string) => {
     setActiveMethod(method);
@@ -38,8 +42,14 @@ const Mint: React.FC = () => {
   useEffect(() => {
     return () => {
       claimPersistControllerRef.current?.abort();
+      // Limpiar el escáner QR si está activo
+      if (qrCodeScannerRef.current && isScanning) {
+        qrCodeScannerRef.current.stop().catch(() => {
+          // Ignorar errores al detener
+        });
+      }
     };
-  }, []);
+  }, [isScanning]);
 
   const persistClaimedSpotLocally = async (eventId: number) => {
     if (!address) return;
@@ -139,12 +149,94 @@ const Mint: React.FC = () => {
   };
 
   const handleQRScan = async () => {
-    // TODO: Implementar escáner QR con eventId real
-    showNotification({
-      type: "info",
-      title: "Próximamente",
-      message: "El escaneo QR enviará el reclamo automático al backend.",
-    });
+    if (isScanning) {
+      // Detener el escáner
+      try {
+        if (qrCodeScannerRef.current) {
+          await qrCodeScannerRef.current.stop();
+          qrCodeScannerRef.current.clear();
+          qrCodeScannerRef.current = null;
+        }
+        setIsScanning(false);
+      } catch (error) {
+        console.error("Error deteniendo el escáner:", error);
+      }
+      return;
+    }
+
+    // Iniciar el escáner
+    if (!qrCodeContainerRef.current) {
+      showNotification({
+        type: "error",
+        title: "Error",
+        message: "No se pudo inicializar el escáner QR. Recarga la página e intenta nuevamente.",
+      });
+      return;
+    }
+
+    try {
+      setIsScanning(true);
+      const scanner = new Html5Qrcode("qr-reader-mint");
+      qrCodeScannerRef.current = scanner;
+
+      await scanner.start(
+        {
+          facingMode: "environment", // Cámara trasera en móvil
+        },
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
+          aspectRatio: 1.0,
+        },
+        (decodedText) => {
+          // Código QR escaneado exitosamente
+          scanner.stop().then(() => {
+            qrCodeScannerRef.current = null;
+            setIsScanning(false);
+            
+            // Extraer eventId del código QR
+            const eventId = extractEventIdFromLink(decodedText);
+            if (eventId !== null) {
+              executeClaim(eventId);
+            } else {
+              showNotification({
+                type: "error",
+                title: "Código QR inválido",
+                message: "El código QR escaneado no contiene un evento válido. Intenta con otro código.",
+              });
+            }
+          }).catch((err) => {
+            console.error("Error deteniendo el escáner:", err);
+            setIsScanning(false);
+          });
+        },
+        (errorMessage) => {
+          // Ignorar errores de escaneo (solo loguear en desarrollo)
+          if (import.meta.env.DEV) {
+            // console.debug("QR scan error:", errorMessage);
+          }
+        }
+      );
+    } catch (error: any) {
+      console.error("Error iniciando el escáner QR:", error);
+      setIsScanning(false);
+      qrCodeScannerRef.current = null;
+      
+      let errorMessage = "No se pudo acceder a la cámara.";
+      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+        errorMessage = "Permiso de cámara denegado. Por favor, permite el acceso a la cámara en la configuración de tu navegador.";
+      } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+        errorMessage = "No se encontró una cámara en tu dispositivo.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      showNotification({
+        type: "error",
+        title: "Error al acceder a la cámara",
+        message: errorMessage,
+      });
+    }
   };
 
   const handleLinkClaim = async () => {
@@ -451,15 +543,46 @@ const Mint: React.FC = () => {
                   <Text as="p" size="md" className="text-stellar-black font-subhead">
                     Escanear código QR
                   </Text>
+                  
+                  {/* Contenedor para el escáner QR */}
+                  <div 
+                    id="qr-reader-mint"
+                    ref={qrCodeContainerRef}
+                    className={`w-full ${isScanning ? 'min-h-[300px]' : 'min-h-[200px]'} bg-stellar-black/5 rounded-xl border-2 border-dashed border-stellar-lilac/30 flex items-center justify-center overflow-hidden`}
+                  >
+                    {!isScanning && (
+                      <div className="text-center p-8">
+                        <div className="text-6xl mb-4">📷</div>
+                        <Text as="p" size="sm" className="text-stellar-black/60 font-body">
+                          Presiona el botón para iniciar el escáner
+                        </Text>
+                      </div>
+                    )}
+                  </div>
+                  
                   <Button
                     onClick={handleQRScan}
                     variant="primary"
                     size="lg"
                     disabled={isProcessing}
-                    className="w-full bg-stellar-gold text-stellar-black hover:bg-yellow-400 font-semibold rounded-full py-3 shadow-md hover:shadow-lg transition-all"
+                    className={`w-full font-semibold rounded-full py-3 shadow-md hover:shadow-lg transition-all ${
+                      isScanning 
+                        ? 'bg-red-500 text-white hover:bg-red-600' 
+                        : 'bg-stellar-gold text-stellar-black hover:bg-yellow-400'
+                    }`}
                   >
-                    {isProcessing ? "Procesando..." : "Abrir Cámara"}
+                    {isProcessing 
+                      ? "Procesando..." 
+                      : isScanning 
+                        ? "Detener Escáner" 
+                        : "Abrir Cámara"}
                   </Button>
+                  
+                  {isScanning && (
+                    <Text as="p" size="xs" className="text-stellar-black/50 font-body text-center">
+                      Apunta la cámara hacia el código QR del evento
+                    </Text>
+                  )}
                 </div>
               )}
 
