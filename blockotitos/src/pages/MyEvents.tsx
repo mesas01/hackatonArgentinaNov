@@ -4,9 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useWallet } from "../hooks/useWallet";
 import { useNavigate } from "react-router-dom";
 import { generateLinkQRCode } from "../utils/qrCode";
-import { getLocalEventsByCreator } from "../utils/localEvents";
+import { getLocalEventsByCreator, updateLocalEvent } from "../utils/localEvents";
 import TldrCard from "../components/layout/TldrCard";
-import { fetchOnchainEvents } from "../util/backend";
+import { fetchMintedCount, fetchOnchainEvents } from "../util/backend";
+import { useNotification } from "../hooks/useNotification";
+import { buildErrorDetail } from "../utils/notificationHelpers";
+import ruedaGif from "../images/rueda.gif";
 
 interface EventData {
   id: string;
@@ -104,6 +107,8 @@ const MyEvents: React.FC = () => {
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
   const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
   const [loadingQR, setLoadingQR] = useState<Record<string, boolean>>({});
+  const [isRefreshingOnchain, setIsRefreshingOnchain] = useState(false);
+  const { showNotification } = useNotification();
 
   // Obtener eventos locales (temporal hasta que el contrato esté configurado)
   const [localEvents, setLocalEvents] = useState<EventData[]>([]);
@@ -111,12 +116,20 @@ const MyEvents: React.FC = () => {
   const {
     data: onchainEvents = [],
     isLoading: isLoadingOnchainEvents,
+    isFetching: isFetchingOnchainEvents,
     error: onchainError,
     refetch: refetchOnchainEvents,
   } = useQuery({
     queryKey: ["onchain-events", address],
-    queryFn: () => fetchOnchainEvents(address || ""),
+    queryFn: ({ signal }) =>
+      fetchOnchainEvents(
+        address
+          ? { creator: address, signal }
+          : { signal },
+      ),
     enabled: !!address,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * attempt, 4000),
     refetchInterval: 15000,
     staleTime: 15000,
   });
@@ -175,18 +188,105 @@ const MyEvents: React.FC = () => {
   }, [sortedContractEvents, sortedLocalEvents]);
   const isLoadingEvents =
     isLoadingLocalEvents || (isConnected && isLoadingOnchainEvents);
-  const eventsError = onchainError ? (onchainError as Error) : null;
+  const eventsError = useMemo(() => {
+    if (!onchainError) {
+      return null;
+    }
+    const error = onchainError as Error;
+    if (
+      error.name === "AbortError" ||
+      /aborted/i.test(error.message || "")
+    ) {
+      return null;
+    }
+    return error;
+  }, [onchainError]);
+  const eventsErrorMessage = useMemo(() => {
+    if (!eventsError) {
+      return "";
+    }
+    if (/Failed to fetch|NetworkError/i.test(eventsError.message || "")) {
+      return "No pudimos conectar con el backend. Verifica que esté encendido e inténtalo nuevamente.";
+    }
+    if (/timeout/i.test(eventsError.message || "")) {
+      return "El backend tardó demasiado en responder. Reintenta en unos segundos.";
+    }
+    return eventsError.message || "Ocurrió un error inesperado.";
+  }, [eventsError]);
   const totalEvents = eventsToDisplay.length;
   const eventsSummaryLabel = isLoadingEvents
     ? "Cargando..."
     : totalEvents === 0
     ? "0 eventos creados"
     : `${totalEvents} ${totalEvents === 1 ? "evento creado" : "eventos creados"}`;
+  const isSyncingOnchain =
+    !isLoadingOnchainEvents && isFetchingOnchainEvents;
 
   const handleRetry = () => {
     loadLocalEvents();
     if (address) {
       void refetchOnchainEvents();
+    }
+  };
+
+  const refreshMintedCounts = async () => {
+    if (isRefreshingOnchain) return;
+    setIsRefreshingOnchain(true);
+    let hadErrors = false;
+
+    try {
+      for (const event of localEvents) {
+        const eventIdNumber =
+          event.contractEventId ?? Number.parseInt(event.id, 10);
+        if (!eventIdNumber || Number.isNaN(eventIdNumber)) {
+          continue;
+        }
+
+        try {
+          const { mintedCount } = await fetchMintedCount(eventIdNumber);
+          setLocalEvents((prev) =>
+            prev.map((item) =>
+              item.id === event.id
+                ? { ...item, claimedSpots: mintedCount }
+                : item,
+            ),
+          );
+          updateLocalEvent(event.id, { claimedSpots: mintedCount });
+        } catch (error) {
+          hadErrors = true;
+          console.error(
+            `Error refreshing minted count for event ${eventIdNumber}:`,
+            error,
+          );
+        }
+      }
+
+      await refetchOnchainEvents();
+
+      showNotification({
+        type: hadErrors ? "warning" : "success",
+        title: hadErrors
+          ? "Actualización parcial"
+          : "Datos on-chain sincronizados",
+        message: hadErrors
+          ? "Algunos eventos no pudieron sincronizarse. Intenta nuevamente."
+          : "Métricas de reclamos actualizadas.",
+        copyText: hadErrors
+          ? buildErrorDetail(
+              new Error("No se pudieron sincronizar todos los eventos."),
+            )
+          : undefined,
+      });
+    } catch (error) {
+      console.error("Error refreshing on-chain stats:", error);
+      showNotification({
+        type: "error",
+        title: "Error al actualizar",
+        message: "No pudimos sincronizar los reclamos. Intenta nuevamente.",
+        copyText: buildErrorDetail(error),
+      });
+    } finally {
+      setIsRefreshingOnchain(false);
     }
   };
 
@@ -220,25 +320,59 @@ const MyEvents: React.FC = () => {
     }
   };
 
-  const copyToClipboard = (text: string, type: 'link' | 'code', id: string) => {
-    if (!navigator?.clipboard) {
-      console.warn("Clipboard API no disponible en este navegador");
+  const copyTextWithFallback = async (text: string) => {
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (error) {
+        console.warn("Clipboard API falló, usando fallback", error);
+      }
+    }
+
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    let successful = false;
+    try {
+      successful = document.execCommand("copy");
+    } catch (error) {
+      console.error("Fallback de portapapeles falló:", error);
+    } finally {
+      document.body.removeChild(textarea);
+    }
+    return successful;
+  };
+
+  const copyToClipboard = async (text: string, type: "link" | "code", id: string) => {
+    const success = await copyTextWithFallback(text);
+    if (!success) {
+      showNotification({
+        type: "error",
+        title: "No se pudo copiar",
+        message: "Copia manualmente el texto seleccionado.",
+      });
       return;
     }
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        if (type === 'link') {
-          setCopiedLink(id);
-          setTimeout(() => setCopiedLink(null), 2000);
-        } else {
-          setCopiedCode(id);
-          setTimeout(() => setCopiedCode(null), 2000);
-        }
-      })
-      .catch((error) =>
-        console.error("Error copiando al portapapeles:", error),
-      );
+
+    if (type === "link") {
+      setCopiedLink(id);
+      setTimeout(() => setCopiedLink(null), 2000);
+    } else {
+      setCopiedCode(id);
+      setTimeout(() => setCopiedCode(null), 2000);
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -355,8 +489,13 @@ const MyEvents: React.FC = () => {
                       <Text as="h1" size="xl" className="text-3xl md:text-4xl font-headline text-stellar-black mb-2">
                         Mis Eventos
                       </Text>
-                      <Text as="p" size="md" className="text-stellar-black/70 font-body">
-                        {eventsSummaryLabel}
+                      <Text as="p" size="md" className="text-stellar-black/70 font-body flex items-center gap-2">
+                        <span>{eventsSummaryLabel}</span>
+                        {isSyncingOnchain && (
+                          <span className="text-xs text-stellar-black/50 animate-pulse">
+                            Sincronizando...
+                          </span>
+                        )}
                       </Text>
                     </div>
                     <Button
@@ -367,10 +506,20 @@ const MyEvents: React.FC = () => {
                     >
                       ➕ Crear Evento
                     </Button>
+                    <Button
+                      variant="tertiary"
+                      size="md"
+                      onClick={refreshMintedCounts}
+                      disabled={isRefreshingOnchain}
+                      className="border-2 border-stellar-black/10 text-stellar-black hover:bg-stellar-black/5 rounded-full px-6 py-2.5 font-semibold"
+                    >
+                      {isRefreshingOnchain ? "Actualizando..." : "Actualizar on-chain"}
+                    </Button>
                   </div>
                 </div>
                 <div className="col-span-full xl:col-span-24 xl:row-start-2 xl:flex xl:justify-center">
                   <TldrCard
+                    label=""
                     className="xl:mx-auto"
                     summary="Esta vista resume el estado de tus SPOTs."
                     bullets={[
@@ -386,7 +535,13 @@ const MyEvents: React.FC = () => {
             {/* Events List */}
             {isLoadingEvents ? (
               <div className="bg-stellar-white rounded-3xl shadow-lg p-12 text-center border border-stellar-lilac/20">
-                <div className="text-6xl mb-6">⏳</div>
+                <div className="mb-6 flex justify-center">
+                  <img 
+                    src={ruedaGif} 
+                    alt="Cargando..." 
+                    className="w-24 h-24 object-contain"
+                  />
+                </div>
                 <Text as="h2" size="lg" className="text-2xl font-headline text-stellar-black mb-4">
                   Cargando eventos...
                 </Text>
@@ -401,7 +556,7 @@ const MyEvents: React.FC = () => {
                   No pudimos cargar tus eventos
                 </Text>
                 <Text as="p" size="md" className="text-stellar-black/70 mb-8 font-body max-w-xl mx-auto">
-                  {eventsError instanceof Error ? eventsError.message : "Intenta nuevamente en unos segundos."}
+                  {eventsErrorMessage || "Intenta nuevamente en unos segundos."}
                 </Text>
                 <Button
                   variant="primary"

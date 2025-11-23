@@ -94,6 +94,8 @@ const CreateEvent: React.FC = () => {
     }));
   };
 
+  const placeholderImage = "https://via.placeholder.com/300";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -124,17 +126,6 @@ const CreateEvent: React.FC = () => {
     }
 
     try {
-      // Procesar imagen si hay archivo
-      let finalImageUrl = formData.imageUrl;
-      if (formData.imageFile) {
-        // En producción, aquí subirías la imagen a IPFS, Firebase Storage, etc.
-        // Por ahora, usamos el preview como base64 temporalmente
-        // TODO: Subir a almacenamiento permanente y obtener URL
-        finalImageUrl = formData.imagePreview || formData.imageUrl || "https://via.placeholder.com/300";
-      } else if (!formData.imageUrl) {
-        finalImageUrl = "https://via.placeholder.com/300";
-      }
-
       // Convertir fechas a timestamps Unix (segundos)
       const eventDate = Math.floor(new Date(formData.eventDate).getTime() / 1000);
       const claimStart = Math.floor(new Date(formData.claimStart).getTime() / 1000);
@@ -142,6 +133,11 @@ const CreateEvent: React.FC = () => {
 
       // Metadata URI - por ahora usar un placeholder
       const metadataUri = formData.metadataUri || `https://spot.example.com/metadata/${Date.now()}`;
+
+      const imageUrlForRequest = formData.imageFile ? undefined : (formData.imageUrl || placeholderImage);
+      const localPreviewFallback = formData.imageFile
+        ? formData.imagePreview || placeholderImage
+        : imageUrlForRequest || placeholderImage;
 
       // Guardar evento localmente (temporal hasta que el contrato esté configurado)
       setIsSubmitting(true);
@@ -157,7 +153,8 @@ const CreateEvent: React.FC = () => {
           claimStart,
           claimEnd,
           metadataUri,
-          imageUrl: finalImageUrl,
+          imageUrl: imageUrlForRequest,
+          imageFile: formData.imageFile ?? undefined,
         };
 
         const backendResponse = await createEventRequest(backendPayload);
@@ -168,6 +165,8 @@ const CreateEvent: React.FC = () => {
           );
         }
 
+        const resolvedImageUrl = backendResponse.imageUrl || localPreviewFallback || placeholderImage;
+
         const newEvent = saveLocalEvent(
           {
             name: formData.eventName,
@@ -177,7 +176,7 @@ const CreateEvent: React.FC = () => {
             maxSpots: parseInt(formData.maxSpots),
             claimStart: formData.claimStart,
             claimEnd: formData.claimEnd,
-            imageUrl: finalImageUrl,
+            imageUrl: resolvedImageUrl,
             metadataUri,
             creator: address!,
             distributionMethods,
@@ -305,6 +304,7 @@ const CreateEvent: React.FC = () => {
               </Text>
             </div>
                 <TldrCard
+                  label=""
                   summary="Antes de completar el formulario, asegúrate de tener arte, fechas y métodos de entrega listos."
                   bullets={[
                     { label: "Visual", detail: "Usa imágenes humanas y resalta highlights." },
@@ -330,7 +330,8 @@ const CreateEvent: React.FC = () => {
                 onChange={handleInputChange}
                 placeholder="Ej: Hackathon Stellar 2024"
                 required
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
             </div>
 
@@ -347,7 +348,8 @@ const CreateEvent: React.FC = () => {
                 value={formData.eventDate}
                 onChange={handleInputChange}
                 required
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
             </div>
 
@@ -365,7 +367,8 @@ const CreateEvent: React.FC = () => {
                 onChange={handleInputChange}
                 placeholder="Ej: Bogotá, Colombia"
                 required
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
             </div>
 
@@ -382,7 +385,8 @@ const CreateEvent: React.FC = () => {
                 placeholder="Describe tu evento..."
                 required
                 rows={4}
-                className="w-full px-4 py-2 border border-stellar-black/20 rounded-lg focus:ring-2 focus:ring-stellar-lilac focus:border-transparent resize-none"
+                className="w-full px-4 py-2 border-2 border-stellar-lilac/60 rounded-2xl focus:border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20 resize-none"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '1rem' }}
               />
             </div>
 
@@ -401,7 +405,8 @@ const CreateEvent: React.FC = () => {
                 placeholder="Ej: 100"
                 min="1"
                 required
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
             </div>
 
@@ -419,7 +424,8 @@ const CreateEvent: React.FC = () => {
                   value={formData.claimStart}
                   onChange={handleInputChange}
                   required
-                  className="w-full"
+                  className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                  style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
                 />
               </div>
               <div>
@@ -434,7 +440,8 @@ const CreateEvent: React.FC = () => {
                   value={formData.claimEnd}
                   onChange={handleInputChange}
                   required
-                  className="w-full"
+                  className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                  style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
                 />
               </div>
             </div>
@@ -505,7 +512,8 @@ const CreateEvent: React.FC = () => {
                 onChange={handleInputChange}
                 placeholder="https://example.com/image.png o /images/events/mi-evento.jpg"
                 disabled={!!formData.imageFile}
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
               </div>
 
@@ -528,7 +536,8 @@ const CreateEvent: React.FC = () => {
                 value={formData.metadataUri}
                 onChange={handleInputChange}
                 placeholder="https://example.com/metadata.json"
-                className="w-full"
+                className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
               />
             </div>
 

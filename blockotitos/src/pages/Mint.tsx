@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Layout, Text, Button, Input } from "@stellar/design-system";
 import { useWallet } from "../hooks/useWallet";
 import { useNavigate } from "react-router-dom";
@@ -21,32 +21,55 @@ const Mint: React.FC = () => {
   const [linkValue, setLinkValue] = useState("");
   const [codeValue, setCodeValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const claimPersistControllerRef = useRef<AbortController | null>(null);
+  const actionPanelRef = useRef<HTMLDivElement | null>(null);
 
   const handleMethodSelect = (method: string) => {
     setActiveMethod(method);
+    // Scroll suave al panel de acción después de un pequeño delay para que el DOM se actualice
+    setTimeout(() => {
+      actionPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
   };
+
+  useEffect(() => {
+    return () => {
+      claimPersistControllerRef.current?.abort();
+    };
+  }, []);
 
   const persistClaimedSpotLocally = async (eventId: number) => {
     if (!address) return;
 
+    claimPersistControllerRef.current?.abort();
+    const controller = new AbortController();
+    claimPersistControllerRef.current = controller;
+
     try {
-      const events = await fetchOnchainEvents();
+      const events = await fetchOnchainEvents({ signal: controller.signal });
       const match = events.find((event) => event.eventId === eventId);
       if (match) {
         upsertClaimedSpot(address, mapEventToClaimedSpot(match));
         return;
       }
     } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || /aborted/i.test(error.message))
+      ) {
+        console.info("Persistencia del claim cancelada (abortada).");
+        return;
+      }
       console.warn("No se pudo obtener metadata del evento:", error);
+      return;
+    } finally {
+      if (claimPersistControllerRef.current === controller) {
+        claimPersistControllerRef.current = null;
+      }
     }
-
-    upsertClaimedSpot(address, {
-      eventId,
-      name: `SPOT #${eventId}`,
-      date: new Date().toISOString(),
-      image: "🎯",
-      color: "from-stellar-teal/20 to-stellar-teal/40",
-    });
   };
 
   const extractEventIdFromLink = (link: string): number | null => {
@@ -285,6 +308,7 @@ const Mint: React.FC = () => {
               </div>
               <div className="col-span-full xl:col-span-24 xl:row-start-2 xl:flex xl:justify-center">
                 <TldrCard
+                  label=""
                   className="xl:mx-auto"
                   summary="Decide cómo reclamar tu comprobante: QR, link, código, geolocalización o NFC según el contexto del evento."
                   bullets={[
@@ -418,7 +442,10 @@ const Mint: React.FC = () => {
 
           {/* Action Panel */}
           {activeMethod && (
-            <div className="mt-8 p-6 bg-stellar-lilac/10 rounded-xl border border-stellar-lilac/30 max-w-3xl mx-auto">
+            <div 
+              ref={actionPanelRef}
+              className="mt-8 p-6 bg-stellar-lilac/10 rounded-xl border border-stellar-lilac/30 max-w-3xl mx-auto"
+            >
               {activeMethod === "qr" && (
                 <div className="space-y-4">
                   <Text as="p" size="md" className="text-stellar-black font-subhead">
@@ -448,7 +475,8 @@ const Mint: React.FC = () => {
                     value={linkValue}
                     onChange={(e) => setLinkValue(e.target.value)}
                     placeholder="https://spot.example.com/event/..."
-                    className="w-full"
+                    className="w-full !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                    style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
                   />
                   <Button
                     onClick={handleLinkClaim}
@@ -474,7 +502,8 @@ const Mint: React.FC = () => {
                     value={codeValue}
                     onChange={(e) => setCodeValue(e.target.value.toUpperCase())}
                     placeholder="Ej: HACKATHON2024"
-                    className="w-full uppercase"
+                    className="w-full uppercase !border-2 !border-stellar-lilac/60 rounded-full px-4 py-2 focus:!border-stellar-lilac focus:ring-2 focus:ring-stellar-lilac/20"
+                    style={{ border: '2px solid rgba(183, 172, 232, 0.6)', borderRadius: '9999px' }}
                   />
                   <Button
                     onClick={handleCodeClaim}
