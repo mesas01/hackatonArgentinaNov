@@ -103,6 +103,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
         throw new Error(message);
       }
+      
+      // Verificar si hay problemas de CORS (la respuesta puede ser OK pero bloqueada por CORS)
+      const corsHeader = response.headers.get("Access-Control-Allow-Origin");
+      if (corsHeader && corsHeader !== "*" && corsHeader !== window.location.origin) {
+        console.warn(`[Backend] Posible problema de CORS: El backend permite ${corsHeader} pero el frontend está en ${window.location.origin}`);
+      }
 
       return (await response.json()) as T;
     } catch (error) {
@@ -118,6 +124,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       }
       
       if (error instanceof TypeError && error.message.includes("fetch")) {
+        // Verificar si es un error de CORS
+        if (error.message.includes("CORS") || error.message.includes("blocked")) {
+          throw new Error(`Error de CORS: El backend no permite peticiones desde ${typeof window !== "undefined" ? window.location.origin : "este origen"}. Configura CORS_ORIGIN en Google Cloud Run con la URL de tu frontend: ${typeof window !== "undefined" ? window.location.origin : "tu-frontend.vercel.app"}`);
+        }
+        
         const isLocalhost = backendBaseUrl.includes("localhost") || backendBaseUrl.includes("127.0.0.1");
         const errorMessage = isLocalhost
           ? `No se pudo conectar al backend en ${backendBaseUrl}. En producción, configura VITE_BACKEND_URL en Vercel con la URL de tu backend en Google Cloud.`

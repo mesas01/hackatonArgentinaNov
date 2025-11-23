@@ -27,8 +27,8 @@ const AppLayout: React.FC = () => (
           {/* Logo/Brand */}
           <div className="flex items-center gap-2">
             <img 
-              src="src\images\image.png"
-              alt="Soto"
+              src="/images/logo.png"
+              alt="SPOT Logo"
               className="w-6 h-6 object-contain"
             />
             <span className="text-lg font-bold text-stellar-black uppercase">SPOT</span>
@@ -159,8 +159,8 @@ const AppLayout: React.FC = () => (
       <div className="py-3 text-center">
         <div className="flex justify-center items-center gap-2 mb-1">
           <img 
-            src="src\images\image.png"
-            alt="Soto"
+            src="/images/logo.png"
+            alt="SPOT Logo"
             className="w-5 h-5 object-contain"
           />
           <span className="text-stellar-black font-bold text-sm">SPOT</span>
