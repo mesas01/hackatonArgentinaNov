@@ -96,8 +96,16 @@ export const fetchBalances = async (address: string) => {
     // the consumer of `balances` can understand via the lack of `xlm` key.
     // If the error does NOT match 'not found', log the error.
     // We should also possibly not return `{}` in this case?
-    if (!(err instanceof Error && err.message.match(/not found/i))) {
-      console.error(err);
+    if (err instanceof Error) {
+      // Silenciar errores 404 (cuenta no encontrada/no activada)
+      if (err.message.match(/not found|404/i)) {
+        // No hacer nada, es normal para cuentas no activadas
+        return {};
+      }
+      // Log otros errores
+      console.error("Error fetching balances:", err);
+    } else {
+      console.error("Unknown error fetching balances:", err);
     }
     return {};
   }
