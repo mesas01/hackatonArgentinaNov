@@ -90,6 +90,24 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       return (await response.json()) as T;
     } catch (error) {
       lastError = error;
+      
+      // Detectar errores específicos de conexión
+      if (isAbortError(error)) {
+        const isLocalhost = backendBaseUrl.includes("localhost") || backendBaseUrl.includes("127.0.0.1");
+        const errorMessage = isLocalhost
+          ? `No se pudo conectar al backend. La URL configurada es ${backendBaseUrl}, pero parece que estás en producción. Por favor, configura la variable de entorno VITE_BACKEND_URL en Vercel con la URL de tu backend en Google Cloud.`
+          : `La petición al backend (${backendBaseUrl}) fue cancelada por timeout. Verifica que el backend esté funcionando y accesible.`;
+        throw new Error(errorMessage);
+      }
+      
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        const isLocalhost = backendBaseUrl.includes("localhost") || backendBaseUrl.includes("127.0.0.1");
+        const errorMessage = isLocalhost
+          ? `No se pudo conectar al backend en ${backendBaseUrl}. En producción, configura VITE_BACKEND_URL en Vercel con la URL de tu backend en Google Cloud.`
+          : `No se pudo conectar al backend en ${backendBaseUrl}. Verifica que el backend esté funcionando y que la URL sea correcta.`;
+        throw new Error(errorMessage);
+      }
+      
       if (!isRetryableError(error) || attempt >= maxAttempts) {
         throw error instanceof Error
           ? error
@@ -103,6 +121,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         clearTimeout(timeoutId);
       }
     }
+  }
+
+  // Si llegamos aquí, todos los intentos fallaron
+  if (isAbortError(lastError)) {
+    const isLocalhost = backendBaseUrl.includes("localhost") || backendBaseUrl.includes("127.0.0.1");
+    const errorMessage = isLocalhost
+      ? `No se pudo conectar al backend después de ${maxAttempts} intentos. La URL configurada es ${backendBaseUrl}, pero parece que estás en producción. Por favor, configura la variable de entorno VITE_BACKEND_URL en Vercel con la URL de tu backend en Google Cloud.`
+      : `La petición al backend (${backendBaseUrl}) fue cancelada después de ${maxAttempts} intentos. Verifica que el backend esté funcionando y accesible.`;
+    throw new Error(errorMessage);
   }
 
   throw lastError instanceof Error
